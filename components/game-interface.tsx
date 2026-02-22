@@ -304,6 +304,7 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
   const [checked, setChecked] = useState(false)
   const [showSolution, setShowSolution] = useState(false)
   const [correctCount, setCorrectCount] = useState(0)
+  const [revealedWords, setRevealedWords] = useState<Set<string>>(new Set()) // "clueNumber-direction"
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
 
   // Initialize user grid with pre-revealed letters
@@ -403,8 +404,9 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
   const handleCellInput = useCallback(
     (row: number, col: number, value: string) => {
       if (showSolution) return
-      // Don't allow editing pre-revealed hint cells
+      // Don't allow editing pre-revealed hint cells or individually revealed words
       if (revealedCells.has(`${row},${col}`)) return
+      if (revealedWordCells.has(`${row},${col}`)) return
       const letter = value.toUpperCase().replace(/[^A-Z]/g, "").slice(-1)
       setUserGrid((prev) => {
         const next = prev.map((r) => [...r])
@@ -517,7 +519,42 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
     setShowSolution(true)
     setChecked(false)
     setCorrectCount(crossword.placedWords.length)
+    setRevealedWords(new Set(crossword.placedWords.map((pw) => `${pw.clueNumber}-${pw.direction}`)))
   }, [crossword])
+
+  // Reveal a single word and fill its letters into the grid
+  const handleRevealWord = useCallback(
+    (pw: PlacedWord) => {
+      const wordKey = `${pw.clueNumber}-${pw.direction}`
+      setRevealedWords((prev) => new Set(prev).add(wordKey))
+      setUserGrid((prev) => {
+        const next = prev.map((r) => [...r])
+        const dr = pw.direction === "down" ? 1 : 0
+        const dc = pw.direction === "across" ? 1 : 0
+        for (let i = 0; i < pw.word.length; i++) {
+          next[pw.row + dr * i][pw.col + dc * i] = pw.word[i]
+        }
+        return next
+      })
+      setChecked(false)
+    },
+    [],
+  )
+
+  // Set of cells that belong to individually revealed words
+  const revealedWordCells = useMemo(() => {
+    const cells = new Set<string>()
+    for (const pw of crossword.placedWords) {
+      const wordKey = `${pw.clueNumber}-${pw.direction}`
+      if (!revealedWords.has(wordKey)) continue
+      const dr = pw.direction === "down" ? 1 : 0
+      const dc = pw.direction === "across" ? 1 : 0
+      for (let i = 0; i < pw.word.length; i++) {
+        cells.add(`${pw.row + dr * i},${pw.col + dc * i}`)
+      }
+    }
+    return cells
+  }, [crossword.placedWords, revealedWords])
 
   const handleClueClick = useCallback(
     (pw: PlacedWord) => {
@@ -593,14 +630,18 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                   )
                 }
 
+                const cellKey = `${ri},${ci}`
                 const isSelected = selectedCell?.row === ri && selectedCell?.col === ci
-                const isHighlighted = selectedWordCells.has(`${ri},${ci}`)
-                const isRevealed = revealedCells.has(`${ri},${ci}`)
+                const isHighlighted = selectedWordCells.has(cellKey)
+                const isHintRevealed = revealedCells.has(cellKey)
+                const isWordRevealed = revealedWordCells.has(cellKey)
                 const status = getCellStatus(ri, ci)
                 const displayLetter = showSolution ? cell.letter : (userGrid[ri]?.[ci] ?? "")
+                const isCellLocked = isHintRevealed || isWordRevealed
 
                 let bgColor = "#ffffff"
-                if (isRevealed && !checked) bgColor = "#fef9c3" // warm yellow for hint cells
+                if (isWordRevealed && !isHintRevealed) bgColor = "#e0e7ff" // soft indigo for word reveals
+                else if (isHintRevealed && !checked) bgColor = "#fef9c3" // warm yellow for hint cells
                 else if (status === "correct") bgColor = "#dcfce7"
                 else if (status === "incorrect") bgColor = "#fee2e2"
                 else if (isSelected) bgColor = "#bfdbfe"
@@ -639,8 +680,8 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                         }
                       }}
                       maxLength={2}
-                      readOnly={showSolution || isRevealed}
-                      className={`absolute inset-0 w-full h-full text-center font-mono text-lg font-bold bg-transparent outline-none uppercase select-none ${isRevealed ? "text-amber-700 caret-transparent" : "text-slate-900 caret-blue-600"}`}
+                      readOnly={showSolution || isCellLocked}
+                      className={`absolute inset-0 w-full h-full text-center font-mono text-lg font-bold bg-transparent outline-none uppercase select-none ${isCellLocked ? "text-indigo-700 caret-transparent" : "text-slate-900 caret-blue-600"} ${isHintRevealed ? "!text-amber-700" : ""}`}
                       style={{ padding: "8px 0 0 0" }}
                       aria-label={`Row ${ri + 1}, Column ${ci + 1}`}
                     />
@@ -659,28 +700,51 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
               {acrossClues.map((pw) => {
                 const clueSymbol = wordMap[pw.word] ?? "?"
                 const context = contextClues[pw.word] ?? ""
+                const wordKey = `${pw.clueNumber}-${pw.direction}`
+                const isWordRevealed = revealedWords.has(wordKey)
                 return (
                   <li key={`a-${pw.clueNumber}`}>
-                    <button
-                      type="button"
-                      onClick={() => handleClueClick(pw)}
-                      className="w-full rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-blue-50"
-                    >
-                      <div className="flex items-start gap-2">
-                        <span className="shrink-0 font-semibold text-blue-600">{pw.clueNumber}.</span>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg leading-none">{clueSymbol}</span>
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-                              {pw.word.length} letters
-                            </span>
+                    <div className={`flex items-start gap-1 rounded-lg transition ${isWordRevealed ? "bg-indigo-50" : "hover:bg-blue-50"}`}>
+                      <button
+                        type="button"
+                        onClick={() => handleClueClick(pw)}
+                        className="flex-1 px-3 py-2.5 text-left text-sm"
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="shrink-0 font-semibold text-blue-600">{pw.clueNumber}.</span>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg leading-none">{clueSymbol}</span>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                                {pw.word.length} letters
+                              </span>
+                              {isWordRevealed && (
+                                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-600">
+                                  revealed
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs leading-relaxed text-slate-600 italic">
+                              {'"'}{context}{'"'}
+                            </p>
                           </div>
-                          <p className="text-xs leading-relaxed text-slate-600 italic">
-                            {'"'}{context}{'"'}
-                          </p>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      {!isWordRevealed && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRevealWord(pw)
+                          }}
+                          className="shrink-0 self-center mr-2 rounded-md p-1.5 text-slate-400 transition hover:bg-blue-100 hover:text-blue-600"
+                          title={`Reveal "${pw.word.toLowerCase()}"`}
+                          aria-label={`Reveal word for clue ${pw.clueNumber} across`}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </li>
                 )
               })}
@@ -692,28 +756,51 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
               {downClues.map((pw) => {
                 const clueSymbol = wordMap[pw.word] ?? "?"
                 const context = contextClues[pw.word] ?? ""
+                const wordKey = `${pw.clueNumber}-${pw.direction}`
+                const isWordRevealed = revealedWords.has(wordKey)
                 return (
                   <li key={`d-${pw.clueNumber}`}>
-                    <button
-                      type="button"
-                      onClick={() => handleClueClick(pw)}
-                      className="w-full rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-blue-50"
-                    >
-                      <div className="flex items-start gap-2">
-                        <span className="shrink-0 font-semibold text-blue-600">{pw.clueNumber}.</span>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg leading-none">{clueSymbol}</span>
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
-                              {pw.word.length} letters
-                            </span>
+                    <div className={`flex items-start gap-1 rounded-lg transition ${isWordRevealed ? "bg-indigo-50" : "hover:bg-blue-50"}`}>
+                      <button
+                        type="button"
+                        onClick={() => handleClueClick(pw)}
+                        className="flex-1 px-3 py-2.5 text-left text-sm"
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="shrink-0 font-semibold text-blue-600">{pw.clueNumber}.</span>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg leading-none">{clueSymbol}</span>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                                {pw.word.length} letters
+                              </span>
+                              {isWordRevealed && (
+                                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-600">
+                                  revealed
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs leading-relaxed text-slate-600 italic">
+                              {'"'}{context}{'"'}
+                            </p>
                           </div>
-                          <p className="text-xs leading-relaxed text-slate-600 italic">
-                            {'"'}{context}{'"'}
-                          </p>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      {!isWordRevealed && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRevealWord(pw)
+                          }}
+                          className="shrink-0 self-center mr-2 rounded-md p-1.5 text-slate-400 transition hover:bg-blue-100 hover:text-blue-600"
+                          title={`Reveal "${pw.word.toLowerCase()}"`}
+                          aria-label={`Reveal word for clue ${pw.clueNumber} down`}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </li>
                 )
               })}

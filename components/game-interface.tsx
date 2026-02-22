@@ -209,7 +209,7 @@ export function GameInterface({ gameId, documentText, symbolMap, onBack }: GameI
         )}
 
         {gameId === "crossword" && (
-          <CrosswordGame symbolMap={symbolMap} />
+          <CrosswordGame symbolMap={symbolMap} documentText={documentText} />
         )}
       </div>
     </div>
@@ -218,11 +218,69 @@ export function GameInterface({ gameId, documentText, symbolMap, onBack }: GameI
 
 // ─── Crossword Game Component ──────────────────────────────────────────────────
 
-function CrosswordGame({ symbolMap }: { symbolMap: DocumentSymbolMap }) {
+/**
+ * Extract a contextual clue for a word from the document text.
+ * Returns the sentence where the word appears, with the word replaced by blanks.
+ */
+function extractContextClue(word: string, documentText: string): string {
+  const lowerText = documentText.toLowerCase()
+  const lowerWord = word.toLowerCase()
+
+  // Find sentences containing the word
+  const sentences = documentText.match(/[^.!?\n]+[.!?\n]*/g) || [documentText]
+
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim()
+    if (trimmed.toLowerCase().includes(lowerWord)) {
+      // Replace the word with underscores, preserving the rest of the sentence as context
+      const blanked = trimmed.replace(
+        new RegExp(`\\b${lowerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"),
+        "_".repeat(word.length),
+      )
+      // Trim to a reasonable length
+      if (blanked.length > 120) {
+        // Find the blank position and show context around it
+        const blankPos = blanked.indexOf("_".repeat(word.length))
+        const start = Math.max(0, blankPos - 50)
+        const end = Math.min(blanked.length, blankPos + word.length + 50)
+        const slice = blanked.slice(start, end)
+        return (start > 0 ? "..." : "") + slice.trim() + (end < blanked.length ? "..." : "")
+      }
+      return blanked
+    }
+  }
+
+  // Fallback: search by word fragments in the full text
+  const idx = lowerText.indexOf(lowerWord)
+  if (idx !== -1) {
+    const start = Math.max(0, idx - 40)
+    const end = Math.min(documentText.length, idx + word.length + 40)
+    let snippet = documentText.slice(start, end)
+    snippet = snippet.replace(
+      new RegExp(`\\b${lowerWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"),
+      "_".repeat(word.length),
+    )
+    return (start > 0 ? "..." : "") + snippet.trim() + (end < documentText.length ? "..." : "")
+  }
+
+  return `${word.length} letters`
+}
+
+function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolMap; documentText: string }) {
   const entries = useMemo(() => Object.values(symbolMap), [symbolMap])
   const words = useMemo(() => entries.map((e) => e.word), [entries])
 
   const crossword = useMemo(() => generateCrossword(words), [words])
+
+  // Build context clues from the document text
+  const contextClues = useMemo(() => {
+    const clues: Record<string, string> = {}
+    for (const pw of crossword.placedWords) {
+      const originalWord = entries.find((e) => e.word.toUpperCase() === pw.word)?.word ?? pw.word
+      clues[pw.word] = extractContextClue(originalWord, documentText)
+    }
+    return clues
+  }, [crossword.placedWords, entries, documentText])
 
   const [userGrid, setUserGrid] = useState<string[][]>([])
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null)
@@ -566,16 +624,28 @@ function CrosswordGame({ symbolMap }: { symbolMap: DocumentSymbolMap }) {
             <ul className="flex flex-col gap-2">
               {acrossClues.map((pw) => {
                 const clueSymbol = wordMap[pw.word] ?? "?"
+                const context = contextClues[pw.word] ?? ""
                 return (
                   <li key={`a-${pw.clueNumber}`}>
                     <button
                       type="button"
                       onClick={() => handleClueClick(pw)}
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-blue-50"
+                      className="w-full rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-blue-50"
                     >
-                      <span className="font-semibold text-blue-600">{pw.clueNumber}.</span>{" "}
-                      <span className="text-lg">{clueSymbol}</span>{" "}
-                      <span className="text-slate-500">({pw.word.length} letters)</span>
+                      <div className="flex items-start gap-2">
+                        <span className="shrink-0 font-semibold text-blue-600">{pw.clueNumber}.</span>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg leading-none">{clueSymbol}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                              {pw.word.length} letters
+                            </span>
+                          </div>
+                          <p className="text-xs leading-relaxed text-slate-600 italic">
+                            {'"'}{context}{'"'}
+                          </p>
+                        </div>
+                      </div>
                     </button>
                   </li>
                 )
@@ -587,16 +657,28 @@ function CrosswordGame({ symbolMap }: { symbolMap: DocumentSymbolMap }) {
             <ul className="flex flex-col gap-2">
               {downClues.map((pw) => {
                 const clueSymbol = wordMap[pw.word] ?? "?"
+                const context = contextClues[pw.word] ?? ""
                 return (
                   <li key={`d-${pw.clueNumber}`}>
                     <button
                       type="button"
                       onClick={() => handleClueClick(pw)}
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-blue-50"
+                      className="w-full rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-blue-50"
                     >
-                      <span className="font-semibold text-blue-600">{pw.clueNumber}.</span>{" "}
-                      <span className="text-lg">{clueSymbol}</span>{" "}
-                      <span className="text-slate-500">({pw.word.length} letters)</span>
+                      <div className="flex items-start gap-2">
+                        <span className="shrink-0 font-semibold text-blue-600">{pw.clueNumber}.</span>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg leading-none">{clueSymbol}</span>
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                              {pw.word.length} letters
+                            </span>
+                          </div>
+                          <p className="text-xs leading-relaxed text-slate-600 italic">
+                            {'"'}{context}{'"'}
+                          </p>
+                        </div>
+                      </div>
                     </button>
                   </li>
                 )

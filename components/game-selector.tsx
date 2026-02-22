@@ -1,6 +1,6 @@
 "use client"
 
-import { BrainCircuit, LayoutDashboard, Shuffle } from "lucide-react"
+import { BrainCircuit, Grid3x3, LayoutDashboard, Shuffle } from "lucide-react"
 
 import type { DocumentSymbolMap } from "@/lib/word-symbol-system"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,12 @@ const games = [
     title: "Quick Shuffle Quiz",
     description: "See a random symbol and guess which word it represents.",
     icon: Shuffle,
+  },
+  {
+    id: "crossword",
+    title: "Crossword Puzzle",
+    description: "Fill in the crossword grid using words from your document (zonder lidwoorden).",
+    icon: Grid3x3,
   },
 ] as const
 
@@ -65,7 +71,7 @@ export function GameSelector({ documentText, symbolMap, onSelectGame, onBack }: 
           </div>
         </div>
 
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           {games.map((game) => {
             const Icon = game.icon
             return (

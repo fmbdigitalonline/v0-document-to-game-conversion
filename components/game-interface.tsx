@@ -282,6 +282,22 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
     return clues
   }, [crossword.placedWords, entries, documentText])
 
+  // Pre-reveal one letter per word at a varying position (stable per crossword)
+  const revealedCells = useMemo(() => {
+    const cells = new Map<string, string>() // key: "row,col" -> letter
+    for (let wi = 0; wi < crossword.placedWords.length; wi++) {
+      const pw = crossword.placedWords[wi]
+      // Pick a different position per word: spread across the word length
+      const revealIndex = (wi * 3 + 1) % pw.word.length
+      const dr = pw.direction === "down" ? 1 : 0
+      const dc = pw.direction === "across" ? 1 : 0
+      const r = pw.row + dr * revealIndex
+      const c = pw.col + dc * revealIndex
+      cells.set(`${r},${c}`, pw.word[revealIndex])
+    }
+    return cells
+  }, [crossword])
+
   const [userGrid, setUserGrid] = useState<string[][]>([])
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null)
   const [direction, setDirection] = useState<"across" | "down">("across")
@@ -290,17 +306,21 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
   const [correctCount, setCorrectCount] = useState(0)
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
 
-  // Initialize empty user grid
+  // Initialize user grid with pre-revealed letters
   useEffect(() => {
     if (crossword.rows > 0 && crossword.cols > 0) {
-      setUserGrid(
-        Array.from({ length: crossword.rows }, () => Array(crossword.cols).fill("")),
-      )
+      const grid = Array.from({ length: crossword.rows }, () => Array(crossword.cols).fill(""))
+      // Seed the revealed letters into the grid
+      for (const [key, letter] of revealedCells) {
+        const [r, c] = key.split(",").map(Number)
+        grid[r][c] = letter
+      }
+      setUserGrid(grid)
       setChecked(false)
       setShowSolution(false)
       setCorrectCount(0)
     }
-  }, [crossword])
+  }, [crossword, revealedCells])
 
   const wordMap = useMemo(() => {
     const map: Record<string, string> = {}
@@ -383,6 +403,8 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
   const handleCellInput = useCallback(
     (row: number, col: number, value: string) => {
       if (showSolution) return
+      // Don't allow editing pre-revealed hint cells
+      if (revealedCells.has(`${row},${col}`)) return
       const letter = value.toUpperCase().replace(/[^A-Z]/g, "").slice(-1)
       setUserGrid((prev) => {
         const next = prev.map((r) => [...r])
@@ -391,12 +413,22 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
       })
       setChecked(false)
 
-      // Auto-advance to next cell in direction
+      // Auto-advance to next cell in direction, skipping revealed hint cells
       if (letter) {
         const dr = direction === "down" ? 1 : 0
         const dc = direction === "across" ? 1 : 0
-        const nr = row + dr
-        const nc = col + dc
+        let nr = row + dr
+        let nc = col + dc
+        // Skip over pre-revealed cells
+        while (
+          nr < crossword.rows &&
+          nc < crossword.cols &&
+          !crossword.grid[nr][nc].isBlack &&
+          revealedCells.has(`${nr},${nc}`)
+        ) {
+          nr += dr
+          nc += dc
+        }
         if (nr < crossword.rows && nc < crossword.cols && !crossword.grid[nr][nc].isBlack) {
           setSelectedCell({ row: nr, col: nc })
           const key = `${nr},${nc}`
@@ -563,11 +595,13 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
 
                 const isSelected = selectedCell?.row === ri && selectedCell?.col === ci
                 const isHighlighted = selectedWordCells.has(`${ri},${ci}`)
+                const isRevealed = revealedCells.has(`${ri},${ci}`)
                 const status = getCellStatus(ri, ci)
                 const displayLetter = showSolution ? cell.letter : (userGrid[ri]?.[ci] ?? "")
 
                 let bgColor = "#ffffff"
-                if (status === "correct") bgColor = "#dcfce7"
+                if (isRevealed && !checked) bgColor = "#fef9c3" // warm yellow for hint cells
+                else if (status === "correct") bgColor = "#dcfce7"
                 else if (status === "incorrect") bgColor = "#fee2e2"
                 else if (isSelected) bgColor = "#bfdbfe"
                 else if (isHighlighted) bgColor = "#eff6ff"
@@ -605,8 +639,8 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                         }
                       }}
                       maxLength={2}
-                      readOnly={showSolution}
-                      className="absolute inset-0 w-full h-full text-center font-mono text-lg font-bold text-slate-900 bg-transparent outline-none caret-blue-600 uppercase select-none"
+                      readOnly={showSolution || isRevealed}
+                      className={`absolute inset-0 w-full h-full text-center font-mono text-lg font-bold bg-transparent outline-none uppercase select-none ${isRevealed ? "text-amber-700 caret-transparent" : "text-slate-900 caret-blue-600"}`}
                       style={{ padding: "8px 0 0 0" }}
                       aria-label={`Row ${ri + 1}, Column ${ci + 1}`}
                     />

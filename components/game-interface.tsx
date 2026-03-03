@@ -86,7 +86,7 @@ export function GameInterface({ gameId, documentText, symbolMap, onBack }: GameI
 
   return (
     <div className="min-h-screen p-6">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm uppercase tracking-[0.2em] text-blue-600">{title}</p>
@@ -608,13 +608,13 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
 
       <div className="flex flex-col gap-6 lg:flex-row">
         {/* Grid */}
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
           <div
             className="inline-grid"
             style={{
-              gridTemplateColumns: `repeat(${crossword.cols}, 40px)`,
-              gridTemplateRows: `repeat(${crossword.rows}, 40px)`,
-              gap: "1px",
+              gridTemplateColumns: `repeat(${crossword.cols}, 52px)`,
+              gridTemplateRows: `repeat(${crossword.rows}, 52px)`,
+              gap: "2px",
               backgroundColor: "#cbd5e1",
             }}
           >
@@ -625,7 +625,7 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                     <div
                       key={`${ri}-${ci}`}
                       className="bg-slate-800"
-                      style={{ width: 40, height: 40 }}
+                      style={{ width: 52, height: 52 }}
                     />
                   )
                 }
@@ -652,8 +652,8 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                     key={`${ri}-${ci}`}
                     className="relative cursor-pointer"
                     style={{
-                      width: 40,
-                      height: 40,
+                      width: 52,
+                      height: 52,
                       backgroundColor: bgColor,
                       outline: isSelected ? "2px solid #2563eb" : "none",
                       outlineOffset: "-1px",
@@ -661,7 +661,7 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                     onClick={() => handleCellClick(ri, ci)}
                   >
                     {cell.number && (
-                      <span className="absolute top-0.5 left-0.5 text-[10px] leading-none font-semibold text-slate-500">
+                      <span className="absolute top-1 left-1 text-xs leading-none font-semibold text-slate-500">
                         {cell.number}
                       </span>
                     )}
@@ -681,8 +681,8 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
                       }}
                       maxLength={2}
                       readOnly={showSolution || isCellLocked}
-                      className={`absolute inset-0 w-full h-full text-center font-mono text-lg font-bold bg-transparent outline-none uppercase select-none ${isCellLocked ? "text-indigo-700 caret-transparent" : "text-slate-900 caret-blue-600"} ${isHintRevealed ? "!text-amber-700" : ""}`}
-                      style={{ padding: "8px 0 0 0" }}
+                      className={`absolute inset-0 w-full h-full text-center font-mono text-xl font-bold bg-transparent outline-none uppercase select-none ${isCellLocked ? "text-indigo-700 caret-transparent" : "text-slate-900 caret-blue-600"} ${isHintRevealed ? "!text-amber-700" : ""}`}
+                      style={{ padding: "12px 0 0 0" }}
                       aria-label={`Row ${ri + 1}, Column ${ci + 1}`}
                     />
                   </div>
@@ -693,9 +693,9 @@ function CrosswordGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolM
         </div>
 
         {/* Clues */}
-        <div className="flex flex-1 flex-col gap-6 lg:flex-row">
-          <div className="flex-1 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-lg font-bold text-slate-900">Across</h3>
+        <div className="flex flex-1 flex-col gap-6 xl:flex-row">
+          <div className="flex-1 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm max-h-[600px] overflow-y-auto">
+            <h3 className="mb-4 text-xl font-bold text-slate-900">Across</h3>
             <ul className="flex flex-col gap-2">
               {acrossClues.map((pw) => {
                 const clueSymbol = wordMap[pw.word] ?? "?"

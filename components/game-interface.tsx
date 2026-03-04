@@ -226,63 +226,76 @@ export function GameInterface({ gameId, documentText, symbolMap, onBack }: GameI
 interface SentenceGap {
   /** The full original sentence */
   sentence: string
-  /** Segments: alternating between plain text and gap placeholders */
+  /** Segments: each token is either a visible word or a gap to fill */
   parts: { text: string; isGap: boolean; answer: string }[]
-  /** All the words that were blanked in this sentence */
+  /** The single word that was blanked in this sentence */
   answers: string[]
 }
 
 /**
- * Split the document into sentences, then for each sentence find words present
- * in the symbol map and turn them into gaps the user must fill via dropdowns.
+ * Split the document into sentences. For each sentence that contains a known word,
+ * create ONE gap per known word (so the rest of the sentence stays fully visible).
+ * This keeps the sentence structure clear and makes guessing possible from context.
  */
 function buildSentenceGaps(documentText: string, symbolMap: DocumentSymbolMap): SentenceGap[] {
   const knownWords = new Set(Object.keys(symbolMap))
   const sentences = documentText.match(/[^.!?\n]+[.!?\n]*/g) || [documentText]
   const result: SentenceGap[] = []
+  const usedPairs = new Set<string>() // avoid duplicate sentence+word combos
 
   for (const raw of sentences) {
     const trimmed = raw.trim()
-    if (trimmed.length < 10) continue // skip very short fragments
+    if (trimmed.length < 15) continue // skip very short fragments
 
-    // Find known words that appear in this sentence
-    const wordsInSentence: string[] = []
-    const tokens = trimmed.split(/(\s+)/)
+    // Tokenize: split into words and whitespace/punctuation, preserving everything
+    const tokens = trimmed.split(/\b/)
+
+    // Find which known words appear in this sentence
+    const matchedWords: string[] = []
     for (const token of tokens) {
       const clean = token.replace(/[^a-zA-Z]/g, "").toLowerCase()
-      if (clean && knownWords.has(clean) && !wordsInSentence.includes(clean)) {
-        wordsInSentence.push(clean)
+      if (clean && knownWords.has(clean) && !matchedWords.includes(clean)) {
+        matchedWords.push(clean)
       }
     }
 
-    if (wordsInSentence.length === 0) continue
+    if (matchedWords.length === 0) continue
 
-    // Pick up to 3 words to blank per sentence so it stays readable
-    const blanks = wordsInSentence.slice(0, 3)
+    // Create one exercise per matched word -- blank only THAT word, show everything else
+    for (const blankWord of matchedWords) {
+      const pairKey = `${trimmed}::${blankWord}`
+      if (usedPairs.has(pairKey)) continue
+      usedPairs.add(pairKey)
 
-    // Build parts array by walking through the sentence
-    const parts: SentenceGap["parts"] = []
-    let remaining = trimmed
+      const parts: SentenceGap["parts"] = []
+      let blanked = false
 
-    // Replace each blank word one by one, left-to-right in the sentence
-    for (const blankWord of blanks) {
-      const regex = new RegExp(`\\b(${blankWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "i")
-      const match = remaining.match(regex)
-      if (match && match.index !== undefined) {
-        const before = remaining.slice(0, match.index)
-        if (before) parts.push({ text: before, isGap: false, answer: "" })
-        parts.push({ text: "___", isGap: true, answer: blankWord })
-        remaining = remaining.slice(match.index + match[0].length)
+      // Walk through tokens, only blank the first occurrence of blankWord
+      let buffer = ""
+      for (const token of tokens) {
+        const clean = token.replace(/[^a-zA-Z]/g, "").toLowerCase()
+        if (!blanked && clean === blankWord) {
+          // Flush the text buffer as a visible part
+          if (buffer) {
+            parts.push({ text: buffer, isGap: false, answer: "" })
+            buffer = ""
+          }
+          parts.push({ text: "___", isGap: true, answer: blankWord })
+          blanked = true
+        } else {
+          buffer += token
+        }
       }
-    }
-    if (remaining) parts.push({ text: remaining, isGap: false, answer: "" })
+      if (buffer) parts.push({ text: buffer, isGap: false, answer: "" })
 
-    if (parts.some((p) => p.isGap)) {
-      result.push({ sentence: trimmed, parts, answers: blanks })
+      if (blanked) {
+        result.push({ sentence: trimmed, parts, answers: [blankWord] })
+      }
     }
   }
 
-  return result
+  // Shuffle so the user doesn't always see the same sentence order
+  return result.sort(() => Math.random() - 0.5)
 }
 
 function SentenceCompletionGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolMap; documentText: string }) {
@@ -379,10 +392,10 @@ function SentenceCompletionGame({ symbolMap, documentText }: { symbolMap: Docume
       <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-xl md:p-10">
         <h2 className="mb-6 text-xl font-semibold text-slate-900">Complete the sentence</h2>
 
-        <div className="text-lg leading-loose text-slate-800">
+        <p className="text-xl leading-[2.5] text-slate-800">
           {currentSentence?.parts.map((part, i) => {
             if (!part.isGap) {
-              return <span key={i}>{part.text}</span>
+              return <span key={i} className="text-slate-700">{part.text}</span>
             }
 
             const thisGapIdx = gapCounter++
@@ -391,22 +404,22 @@ function SentenceCompletionGame({ symbolMap, documentText }: { symbolMap: Docume
             const isWrong = checked && selected && selected.toLowerCase() !== part.answer.toLowerCase()
 
             return (
-              <span key={i} className="inline-block mx-1 align-middle">
+              <span key={i} className="inline-flex items-center mx-1 align-baseline">
                 <select
                   value={selected}
                   onChange={(e) => handleSelect(thisGapIdx, e.target.value)}
                   disabled={checked}
-                  className={`rounded-lg border-2 px-3 py-1.5 text-base font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                  className={`rounded-xl border-2 px-4 py-2 text-base font-semibold shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-300 ${
                     isCorrect
                       ? "border-green-400 bg-green-50 text-green-800"
                       : isWrong
                         ? "border-red-400 bg-red-50 text-red-800"
                         : selected
-                          ? "border-blue-300 bg-blue-50 text-blue-800"
-                          : "border-slate-300 bg-slate-50 text-slate-500"
+                          ? "border-blue-400 bg-blue-50 text-blue-800"
+                          : "border-dashed border-slate-400 bg-slate-50 text-slate-500"
                   }`}
                 >
-                  <option value="">-- kies een woord --</option>
+                  <option value="">{"[ kies een woord ]"}</option>
                   {dropdownOptions.map((word) => (
                     <option key={word} value={word}>
                       {word}
@@ -414,14 +427,19 @@ function SentenceCompletionGame({ symbolMap, documentText }: { symbolMap: Docume
                   ))}
                 </select>
                 {checked && isWrong && (
-                  <span className="ml-1 text-sm font-semibold text-green-700">
+                  <span className="ml-2 rounded-lg bg-green-100 px-2 py-1 text-sm font-semibold text-green-700">
                     {"\u2192"} {part.answer}
+                  </span>
+                )}
+                {checked && isCorrect && (
+                  <span className="ml-1 text-green-600">
+                    <Check className="inline h-5 w-5" />
                   </span>
                 )}
               </span>
             )
           })}
-        </div>
+        </p>
       </div>
 
       {/* Actions */}

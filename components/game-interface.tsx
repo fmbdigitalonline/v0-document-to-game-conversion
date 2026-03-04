@@ -12,6 +12,7 @@ const gameTitles: Record<string, string> = {
   flashcards: "Symbol Flashcards",
   match: "Symbol Match",
   shuffle: "Quick Shuffle Quiz",
+  sentences: "Sentence Completion",
   crossword: "Crossword Puzzle",
 }
 
@@ -208,8 +209,242 @@ export function GameInterface({ gameId, documentText, symbolMap, onBack }: GameI
           </div>
         )}
 
+        {gameId === "sentences" && (
+          <SentenceCompletionGame symbolMap={symbolMap} documentText={documentText} />
+        )}
+
         {gameId === "crossword" && (
           <CrosswordGame symbolMap={symbolMap} documentText={documentText} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Sentence Completion Game Component ─────────────────────────────────────────
+
+interface SentenceGap {
+  /** The full original sentence */
+  sentence: string
+  /** Segments: alternating between plain text and gap placeholders */
+  parts: { text: string; isGap: boolean; answer: string }[]
+  /** All the words that were blanked in this sentence */
+  answers: string[]
+}
+
+/**
+ * Split the document into sentences, then for each sentence find words present
+ * in the symbol map and turn them into gaps the user must fill via dropdowns.
+ */
+function buildSentenceGaps(documentText: string, symbolMap: DocumentSymbolMap): SentenceGap[] {
+  const knownWords = new Set(Object.keys(symbolMap))
+  const sentences = documentText.match(/[^.!?\n]+[.!?\n]*/g) || [documentText]
+  const result: SentenceGap[] = []
+
+  for (const raw of sentences) {
+    const trimmed = raw.trim()
+    if (trimmed.length < 10) continue // skip very short fragments
+
+    // Find known words that appear in this sentence
+    const wordsInSentence: string[] = []
+    const tokens = trimmed.split(/(\s+)/)
+    for (const token of tokens) {
+      const clean = token.replace(/[^a-zA-Z]/g, "").toLowerCase()
+      if (clean && knownWords.has(clean) && !wordsInSentence.includes(clean)) {
+        wordsInSentence.push(clean)
+      }
+    }
+
+    if (wordsInSentence.length === 0) continue
+
+    // Pick up to 3 words to blank per sentence so it stays readable
+    const blanks = wordsInSentence.slice(0, 3)
+
+    // Build parts array by walking through the sentence
+    const parts: SentenceGap["parts"] = []
+    let remaining = trimmed
+
+    // Replace each blank word one by one, left-to-right in the sentence
+    for (const blankWord of blanks) {
+      const regex = new RegExp(`\\b(${blankWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "i")
+      const match = remaining.match(regex)
+      if (match && match.index !== undefined) {
+        const before = remaining.slice(0, match.index)
+        if (before) parts.push({ text: before, isGap: false, answer: "" })
+        parts.push({ text: "___", isGap: true, answer: blankWord })
+        remaining = remaining.slice(match.index + match[0].length)
+      }
+    }
+    if (remaining) parts.push({ text: remaining, isGap: false, answer: "" })
+
+    if (parts.some((p) => p.isGap)) {
+      result.push({ sentence: trimmed, parts, answers: blanks })
+    }
+  }
+
+  return result
+}
+
+function SentenceCompletionGame({ symbolMap, documentText }: { symbolMap: DocumentSymbolMap; documentText: string }) {
+  const entries = useMemo(() => Object.values(symbolMap), [symbolMap])
+  const allWords = useMemo(() => entries.map((e) => e.word), [entries])
+
+  const sentenceGaps = useMemo(() => buildSentenceGaps(documentText, symbolMap), [documentText, symbolMap])
+
+  const [currentIndex, setCurrentIndex] = useState(0)
+  // Map from gap index -> selected word
+  const [selections, setSelections] = useState<Record<number, string>>({})
+  const [checked, setChecked] = useState(false)
+  const [score, setScore] = useState({ correct: 0, total: 0 })
+
+  const currentSentence = sentenceGaps[currentIndex]
+
+  // Build shuffled dropdown options: the correct answers + random distractors
+  const dropdownOptions = useMemo(() => {
+    if (!currentSentence) return []
+    const correctWords = new Set(currentSentence.answers)
+    // Pick some distractors (words NOT in this sentence)
+    const distractors = allWords
+      .filter((w) => !correctWords.has(w))
+      .sort(() => Math.random() - 0.5)
+      .slice(0, Math.max(4, currentSentence.answers.length * 2))
+    // Combine and shuffle
+    return [...currentSentence.answers, ...distractors].sort(() => Math.random() - 0.5)
+  }, [currentSentence, allWords])
+
+  const handleSelect = useCallback((gapIndex: number, value: string) => {
+    setSelections((prev) => ({ ...prev, [gapIndex]: value }))
+    setChecked(false)
+  }, [])
+
+  const handleCheck = useCallback(() => {
+    if (!currentSentence) return
+    let gapIdx = 0
+    let correct = 0
+    for (const part of currentSentence.parts) {
+      if (part.isGap) {
+        if (selections[gapIdx]?.toLowerCase() === part.answer.toLowerCase()) {
+          correct++
+        }
+        gapIdx++
+      }
+    }
+    setScore((prev) => ({
+      correct: prev.correct + correct,
+      total: prev.total + currentSentence.answers.length,
+    }))
+    setChecked(true)
+  }, [currentSentence, selections])
+
+  const handleNext = useCallback(() => {
+    setCurrentIndex((prev) => Math.min(prev + 1, sentenceGaps.length - 1))
+    setSelections({})
+    setChecked(false)
+  }, [sentenceGaps.length])
+
+  const handlePrev = useCallback(() => {
+    setCurrentIndex((prev) => Math.max(prev - 1, 0))
+    setSelections({})
+    setChecked(false)
+  }, [])
+
+  if (sentenceGaps.length === 0) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-white p-10 shadow-xl text-center">
+        <h2 className="text-2xl font-semibold text-slate-900">Not enough sentences</h2>
+        <p className="mt-3 text-slate-600">
+          Upload a document with more content to generate sentence completion exercises.
+        </p>
+      </div>
+    )
+  }
+
+  let gapCounter = 0
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Progress */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-medium text-slate-600">
+          Sentence {currentIndex + 1} of {sentenceGaps.length}
+        </p>
+        {score.total > 0 && (
+          <p className="text-sm font-medium text-blue-600">
+            Score: {score.correct} / {score.total} correct
+          </p>
+        )}
+      </div>
+
+      {/* Sentence card */}
+      <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-xl md:p-10">
+        <h2 className="mb-6 text-xl font-semibold text-slate-900">Complete the sentence</h2>
+
+        <div className="text-lg leading-loose text-slate-800">
+          {currentSentence?.parts.map((part, i) => {
+            if (!part.isGap) {
+              return <span key={i}>{part.text}</span>
+            }
+
+            const thisGapIdx = gapCounter++
+            const selected = selections[thisGapIdx] ?? ""
+            const isCorrect = checked && selected.toLowerCase() === part.answer.toLowerCase()
+            const isWrong = checked && selected && selected.toLowerCase() !== part.answer.toLowerCase()
+
+            return (
+              <span key={i} className="inline-block mx-1 align-middle">
+                <select
+                  value={selected}
+                  onChange={(e) => handleSelect(thisGapIdx, e.target.value)}
+                  disabled={checked}
+                  className={`rounded-lg border-2 px-3 py-1.5 text-base font-medium transition focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+                    isCorrect
+                      ? "border-green-400 bg-green-50 text-green-800"
+                      : isWrong
+                        ? "border-red-400 bg-red-50 text-red-800"
+                        : selected
+                          ? "border-blue-300 bg-blue-50 text-blue-800"
+                          : "border-slate-300 bg-slate-50 text-slate-500"
+                  }`}
+                >
+                  <option value="">-- kies een woord --</option>
+                  {dropdownOptions.map((word) => (
+                    <option key={word} value={word}>
+                      {word}
+                    </option>
+                  ))}
+                </select>
+                {checked && isWrong && (
+                  <span className="ml-1 text-sm font-semibold text-green-700">
+                    {"\u2192"} {part.answer}
+                  </span>
+                )}
+              </span>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={handlePrev} variant="outline" disabled={currentIndex === 0}>
+          Previous
+        </Button>
+        {!checked ? (
+          <Button
+            onClick={handleCheck}
+            className="bg-blue-600 text-white hover:bg-blue-700"
+            disabled={!currentSentence || Object.keys(selections).length === 0}
+          >
+            <Check className="mr-2 h-4 w-4" /> Check answers
+          </Button>
+        ) : (
+          <Button
+            onClick={handleNext}
+            className="bg-blue-600 text-white hover:bg-blue-700"
+            disabled={currentIndex >= sentenceGaps.length - 1}
+          >
+            Next sentence
+          </Button>
         )}
       </div>
     </div>

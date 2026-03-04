@@ -76,6 +76,9 @@ const colorPalette = [
   { bg: "#E5FFF5", text: "#0D7377" }, // Teal
 ]
 
+// Dutch articles (lidwoorden) to exclude from all game modes
+const DUTCH_ARTICLES = ["de", "het", "een", "des", "den", "der"]
+
 /**
  * Generate a unique symbol map for all words in a document
  * Each unique word gets a consistent symbol, color, and icon
@@ -86,6 +89,7 @@ export function generateWordSymbolMap(text: string): DocumentSymbolMap {
 
   const uniqueWords = Array.from(new Set(words))
     .filter((word) => word.length > 1) // Filter out single-letter words
+    .filter((word) => !DUTCH_ARTICLES.includes(word)) // Filter out Dutch articles (lidwoorden)
     .slice(0, 50) // Limit to first 50 unique words
 
   const symbolMap: DocumentSymbolMap = {}
